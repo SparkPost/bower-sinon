@@ -11,13 +11,22 @@ module.exports = function(grunt) {
 
     shell: {
       gitclone: {
-        command: 'git clone git@github.com:cjohansen/Sinon.JS.git build/Sinon.JS'
+        command: 'git clone git@github.com:cjohansen/Sinon.JS.git build/Sinon.JS',
+        options: {
+          failOnError: true
+        }
       },
       gitcheckout: {
-        command: 'cd build/Sinon.JS/ && git checkout <%= grunt.option("version") %>'
+        command: 'cd build/Sinon.JS/ && git checkout <%= grunt.option("version") %>',
+        options: {
+          failOnError: true
+        }
       },
       buildsinon: {
-        command: 'cd build/Sinon.JS/ && ./build'
+        command: 'cd build/Sinon.JS/ && ./build',
+        options: {
+          failOnError: true
+        }
       }
     },
 
