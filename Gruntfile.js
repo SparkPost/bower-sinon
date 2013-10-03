@@ -33,7 +33,7 @@ module.exports = function(grunt) {
     copy: {
       main: {
         files: [
-          {expand: true, src: ['build/Sinon.JS/pkg/*'], dest: '.', flatten: true, filter: 'isFile'}
+          {expand: true, src: ['build/Sinon.JS/pkg/sinon.js'], dest: '.', flatten: true, filter: 'isFile'}
         ]
       }
     }
