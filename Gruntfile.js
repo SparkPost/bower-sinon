@@ -22,6 +22,12 @@ module.exports = function(grunt) {
           failOnError: true
         }
       },
+      installdeps: {
+        command: 'cd build/Sinon.JS/ && npm install',
+        options: {
+          failOnError: true
+        }
+      },
       buildsinon: {
         command: 'cd build/Sinon.JS/ && ./build',
         options: {
@@ -50,6 +56,7 @@ module.exports = function(grunt) {
       'clean',
       'shell:gitclone',
       'shell:gitcheckout',
+      'shell:installdeps',
       'shell:buildsinon',
       'copy'
     ]);

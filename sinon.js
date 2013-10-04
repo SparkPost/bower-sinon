@@ -1,5 +1,5 @@
 /**
- * Sinon.JS 1.7.3, 2013/10/03
+ * Sinon.JS 1.7.3, 2013/10/04
  *
  * @author Christian Johansen (christian@cjohansen.no)
  * @author Contributors: https://github.com/cjohansen/Sinon.JS/blob/master/AUTHORS
@@ -33,6 +33,426 @@
  * THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
+this.sinon = (function () {
+var buster = (function (setTimeout, B) {
+    var isNode = typeof require == "function" && typeof module == "object";
+    var div = typeof document != "undefined" && document.createElement("div");
+    var F = function () {};
+
+    var buster = {
+        bind: function bind(obj, methOrProp) {
+            var method = typeof methOrProp == "string" ? obj[methOrProp] : methOrProp;
+            var args = Array.prototype.slice.call(arguments, 2);
+            return function () {
+                var allArgs = args.concat(Array.prototype.slice.call(arguments));
+                return method.apply(obj, allArgs);
+            };
+        },
+
+        partial: function partial(fn) {
+            var args = [].slice.call(arguments, 1);
+            return function () {
+                return fn.apply(this, args.concat([].slice.call(arguments)));
+            };
+        },
+
+        create: function create(object) {
+            F.prototype = object;
+            return new F();
+        },
+
+        extend: function extend(target) {
+            if (!target) { return; }
+            for (var i = 1, l = arguments.length, prop; i < l; ++i) {
+                for (prop in arguments[i]) {
+                    target[prop] = arguments[i][prop];
+                }
+            }
+            return target;
+        },
+
+        nextTick: function nextTick(callback) {
+            if (typeof process != "undefined" && process.nextTick) {
+                return process.nextTick(callback);
+            }
+            setTimeout(callback, 0);
+        },
+
+        functionName: function functionName(func) {
+            if (!func) return "";
+            if (func.displayName) return func.displayName;
+            if (func.name) return func.name;
+            var matches = func.toString().match(/function\s+([^\(]+)/m);
+            return matches && matches[1] || "";
+        },
+
+        isNode: function isNode(obj) {
+            if (!div) return false;
+            try {
+                obj.appendChild(div);
+                obj.removeChild(div);
+            } catch (e) {
+                return false;
+            }
+            return true;
+        },
+
+        isElement: function isElement(obj) {
+            return obj && obj.nodeType === 1 && buster.isNode(obj);
+        },
+
+        isArray: function isArray(arr) {
+            return Object.prototype.toString.call(arr) == "[object Array]";
+        },
+
+        flatten: function flatten(arr) {
+            var result = [], arr = arr || [];
+            for (var i = 0, l = arr.length; i < l; ++i) {
+                result = result.concat(buster.isArray(arr[i]) ? flatten(arr[i]) : arr[i]);
+            }
+            return result;
+        },
+
+        each: function each(arr, callback) {
+            for (var i = 0, l = arr.length; i < l; ++i) {
+                callback(arr[i]);
+            }
+        },
+
+        map: function map(arr, callback) {
+            var results = [];
+            for (var i = 0, l = arr.length; i < l; ++i) {
+                results.push(callback(arr[i]));
+            }
+            return results;
+        },
+
+        parallel: function parallel(fns, callback) {
+            function cb(err, res) {
+                if (typeof callback == "function") {
+                    callback(err, res);
+                    callback = null;
+                }
+            }
+            if (fns.length == 0) { return cb(null, []); }
+            var remaining = fns.length, results = [];
+            function makeDone(num) {
+                return function done(err, result) {
+                    if (err) { return cb(err); }
+                    results[num] = result;
+                    if (--remaining == 0) { cb(null, results); }
+                };
+            }
+            for (var i = 0, l = fns.length; i < l; ++i) {
+                fns[i](makeDone(i));
+            }
+        },
+
+        series: function series(fns, callback) {
+            function cb(err, res) {
+                if (typeof callback == "function") {
+                    callback(err, res);
+                }
+            }
+            var remaining = fns.slice();
+            var results = [];
+            function callNext() {
+                if (remaining.length == 0) return cb(null, results);
+                var promise = remaining.shift()(next);
+                if (promise && typeof promise.then == "function") {
+                    promise.then(buster.partial(next, null), next);
+                }
+            }
+            function next(err, result) {
+                if (err) return cb(err);
+                results.push(result);
+                callNext();
+            }
+            callNext();
+        },
+
+        countdown: function countdown(num, done) {
+            return function () {
+                if (--num == 0) done();
+            };
+        }
+    };
+
+    if (typeof process === "object" &&
+        typeof require === "function" && typeof module === "object") {
+        var crypto = require("crypto");
+        var path = require("path");
+
+        buster.tmpFile = function (fileName) {
+            var hashed = crypto.createHash("sha1");
+            hashed.update(fileName);
+            var tmpfileName = hashed.digest("hex");
+
+            if (process.platform == "win32") {
+                return path.join(process.env["TEMP"], tmpfileName);
+            } else {
+                return path.join("/tmp", tmpfileName);
+            }
+        };
+    }
+
+    if (Array.prototype.some) {
+        buster.some = function (arr, fn, thisp) {
+            return arr.some(fn, thisp);
+        };
+    } else {
+        // https://developer.mozilla.org/en/JavaScript/Reference/Global_Objects/Array/some
+        buster.some = function (arr, fun, thisp) {
+                        if (arr == null) { throw new TypeError(); }
+            arr = Object(arr);
+            var len = arr.length >>> 0;
+            if (typeof fun !== "function") { throw new TypeError(); }
+
+            for (var i = 0; i < len; i++) {
+                if (arr.hasOwnProperty(i) && fun.call(thisp, arr[i], i, arr)) {
+                    return true;
+                }
+            }
+
+            return false;
+        };
+    }
+
+    if (Array.prototype.filter) {
+        buster.filter = function (arr, fn, thisp) {
+            return arr.filter(fn, thisp);
+        };
+    } else {
+        // https://developer.mozilla.org/en/JavaScript/Reference/Global_Objects/Array/filter
+        buster.filter = function (fn, thisp) {
+                        if (this == null) { throw new TypeError(); }
+
+            var t = Object(this);
+            var len = t.length >>> 0;
+            if (typeof fn != "function") { throw new TypeError(); }
+
+            var res = [];
+            for (var i = 0; i < len; i++) {
+                if (i in t) {
+                    var val = t[i]; // in case fun mutates this
+                    if (fn.call(thisp, val, i, t)) { res.push(val); }
+                }
+            }
+
+            return res;
+        };
+    }
+
+    if (isNode) {
+        module.exports = buster;
+        buster.eventEmitter = require("./buster-event-emitter");
+        Object.defineProperty(buster, "defineVersionGetter", {
+            get: function () {
+                return require("./define-version-getter");
+            }
+        });
+    }
+
+    return buster.extend(B || {}, buster);
+}(setTimeout, buster));
+if (typeof buster === "undefined") {
+    var buster = {};
+}
+
+if (typeof module === "object" && typeof require === "function") {
+    buster = require("buster-core");
+}
+
+buster.format = buster.format || {};
+buster.format.excludeConstructors = ["Object", /^.$/];
+buster.format.quoteStrings = true;
+
+buster.format.ascii = (function () {
+    
+    var hasOwn = Object.prototype.hasOwnProperty;
+
+    var specialObjects = [];
+    if (typeof global != "undefined") {
+        specialObjects.push({ obj: global, value: "[object global]" });
+    }
+    if (typeof document != "undefined") {
+        specialObjects.push({ obj: document, value: "[object HTMLDocument]" });
+    }
+    if (typeof window != "undefined") {
+        specialObjects.push({ obj: window, value: "[object Window]" });
+    }
+
+    function keys(object) {
+        var k = Object.keys && Object.keys(object) || [];
+
+        if (k.length == 0) {
+            for (var prop in object) {
+                if (hasOwn.call(object, prop)) {
+                    k.push(prop);
+                }
+            }
+        }
+
+        return k.sort();
+    }
+
+    function isCircular(object, objects) {
+        if (typeof object != "object") {
+            return false;
+        }
+
+        for (var i = 0, l = objects.length; i < l; ++i) {
+            if (objects[i] === object) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    function ascii(object, processed, indent) {
+        if (typeof object == "string") {
+            var quote = typeof this.quoteStrings != "boolean" || this.quoteStrings;
+            return processed || quote ? '"' + object + '"' : object;
+        }
+
+        if (typeof object == "function" && !(object instanceof RegExp)) {
+            return ascii.func(object);
+        }
+
+        processed = processed || [];
+
+        if (isCircular(object, processed)) {
+            return "[Circular]";
+        }
+
+        if (Object.prototype.toString.call(object) == "[object Array]") {
+            return ascii.array.call(this, object, processed);
+        }
+
+        if (!object) {
+            return "" + object;
+        }
+
+        if (buster.isElement(object)) {
+            return ascii.element(object);
+        }
+
+        if (typeof object.toString == "function" &&
+            object.toString !== Object.prototype.toString) {
+            return object.toString();
+        }
+
+        for (var i = 0, l = specialObjects.length; i < l; i++) {
+            if (object === specialObjects[i].obj) {
+                return specialObjects[i].value;
+            }
+        }
+
+        return ascii.object.call(this, object, processed, indent);
+    }
+
+    ascii.func = function (func) {
+        return "function " + buster.functionName(func) + "() {}";
+    };
+
+    ascii.array = function (array, processed) {
+        processed = processed || [];
+        processed.push(array);
+        var pieces = [];
+
+        for (var i = 0, l = array.length; i < l; ++i) {
+            pieces.push(ascii.call(this, array[i], processed));
+        }
+
+        return "[" + pieces.join(", ") + "]";
+    };
+
+    ascii.object = function (object, processed, indent) {
+        processed = processed || [];
+        processed.push(object);
+        indent = indent || 0;
+        var pieces = [], properties = keys(object), prop, str, obj;
+        var is = "";
+        var length = 3;
+
+        for (var i = 0, l = indent; i < l; ++i) {
+            is += " ";
+        }
+
+        for (i = 0, l = properties.length; i < l; ++i) {
+            prop = properties[i];
+            obj = object[prop];
+
+            if (isCircular(obj, processed)) {
+                str = "[Circular]";
+            } else {
+                str = ascii.call(this, obj, processed, indent + 2);
+            }
+
+            str = (/\s/.test(prop) ? '"' + prop + '"' : prop) + ": " + str;
+            length += str.length;
+            pieces.push(str);
+        }
+
+        var cons = ascii.constructorName.call(this, object);
+        var prefix = cons ? "[" + cons + "] " : ""
+
+        return (length + indent) > 80 ?
+            prefix + "{\n  " + is + pieces.join(",\n  " + is) + "\n" + is + "}" :
+            prefix + "{ " + pieces.join(", ") + " }";
+    };
+
+    ascii.element = function (element) {
+        var tagName = element.tagName.toLowerCase();
+        var attrs = element.attributes, attribute, pairs = [], attrName;
+
+        for (var i = 0, l = attrs.length; i < l; ++i) {
+            attribute = attrs.item(i);
+            attrName = attribute.nodeName.toLowerCase().replace("html:", "");
+
+            if (attrName == "contenteditable" && attribute.nodeValue == "inherit") {
+                continue;
+            }
+
+            if (!!attribute.nodeValue) {
+                pairs.push(attrName + "=\"" + attribute.nodeValue + "\"");
+            }
+        }
+
+        var formatted = "<" + tagName + (pairs.length > 0 ? " " : "");
+        var content = element.innerHTML;
+
+        if (content.length > 20) {
+            content = content.substr(0, 20) + "[...]";
+        }
+
+        var res = formatted + pairs.join(" ") + ">" + content + "</" + tagName + ">";
+
+        return res.replace(/ contentEditable="inherit"/, "");
+    };
+
+    ascii.constructorName = function (object) {
+        var name = buster.functionName(object && object.constructor);
+        var excludes = this.excludeConstructors || buster.format.excludeConstructors || [];
+
+        for (var i = 0, l = excludes.length; i < l; ++i) {
+            if (typeof excludes[i] == "string" && excludes[i] == name) {
+                return "";
+            } else if (excludes[i].test && excludes[i].test(name)) {
+                return "";
+            }
+        }
+
+        return name;
+    };
+
+    return ascii;
+}());
+
+if (typeof module != "undefined") {
+    module.exports = buster.format;
+}
 /*jslint eqeqeq: false, onevar: false, forin: true, nomen: false, regexp: false, plusplus: false*/
 /*global module, require, __dirname, document*/
 /**
@@ -97,26 +517,35 @@ var sinon = (function (buster) {
                 throw new TypeError("Method wrapper should be function");
             }
 
-            var wrappedMethod = object[property];
+            var wrappedMethod = object[property],
+                error;
 
             if (!isFunction(wrappedMethod)) {
-                throw new TypeError("Attempted to wrap " + (typeof wrappedMethod) + " property " +
+                error = new TypeError("Attempted to wrap " + (typeof wrappedMethod) + " property " +
                                     property + " as function");
             }
 
             if (wrappedMethod.restore && wrappedMethod.restore.sinon) {
-                throw new TypeError("Attempted to wrap " + property + " which is already wrapped");
+                error = new TypeError("Attempted to wrap " + property + " which is already wrapped");
             }
 
             if (wrappedMethod.calledBefore) {
                 var verb = !!wrappedMethod.returns ? "stubbed" : "spied on";
-                throw new TypeError("Attempted to wrap " + property + " which is already " + verb);
+                error = new TypeError("Attempted to wrap " + property + " which is already " + verb);
+            }
+
+            if (error) {
+                if (wrappedMethod._stack) {
+                    error.stack += '\n--------------\n' + wrappedMethod._stack;
+                }
+                throw error;
             }
 
             // IE 8 does not support hasOwnProperty on the window object.
             var owned = hasOwn.call(object, property);
             object[property] = method;
             method.displayName = property;
+            method._stack = (new Error('Stack Trace for original')).stack;
 
             method.restore = function () {
                 // For prototype properties try to reset by delete first.
@@ -185,25 +614,15 @@ var sinon = (function (buster) {
                 return false;
             }
 
-            if (aString == "[object Array]") {
-                if (a.length !== b.length) {
-                    return false;
-                }
-
-                for (var i = 0, l = a.length; i < l; i += 1) {
-                    if (!deepEqual(a[i], b[i])) {
-                        return false;
-                    }
-                }
-
-                return true;
-            }
-
             if (aString == "[object Date]") {
                 return a.valueOf() === b.valueOf();
             }
 
             var prop, aLength = 0, bLength = 0;
+
+            if (aString == "[object Array]" && a.length !== b.length) {
+                return false;
+            }
 
             for (prop in a) {
                 aLength += 1;
@@ -353,7 +772,7 @@ var sinon = (function (buster) {
         }
     };
 
-    var isNode = typeof module == "object" && typeof require == "function";
+    var isNode = typeof module !== "undefined" && module.exports;
 
     if (isNode) {
         try {
@@ -407,7 +826,7 @@ var sinon = (function (buster) {
  */
 
 (function (sinon) {
-    var commonJSModule = typeof module == "object" && typeof require == "function";
+    var commonJSModule = typeof module !== 'undefined' && module.exports;
 
     if (!sinon && commonJSModule) {
         sinon = require("../sinon");
@@ -651,7 +1070,7 @@ var sinon = (function (buster) {
   */
 
 (function (sinon) {
-    var commonJSModule = typeof module == "object" && typeof require == "function";
+    var commonJSModule = typeof module !== 'undefined' && module.exports;
     if (!sinon && commonJSModule) {
         sinon = require("../sinon");
     }
@@ -852,7 +1271,7 @@ var sinon = (function (buster) {
   */
 
 (function (sinon) {
-    var commonJSModule = typeof module == "object" && typeof require == "function";
+    var commonJSModule = typeof module !== 'undefined' && module.exports;
     var push = Array.prototype.push;
     var slice = Array.prototype.slice;
     var callId = 0;
@@ -1014,6 +1433,17 @@ var sinon = (function (buster) {
             return sinon.spyCall(this, this.thisValues[i], this.args[i],
                                     this.returnValues[i], this.exceptions[i],
                                     this.callIds[i]);
+        },
+
+        getCalls: function () {
+            var calls = [];
+            var i;
+
+            for (i = 0; i < this.callCount; i++) {
+                calls.push(this.getCall(i));
+            }
+
+            return calls;
         },
 
         calledBefore: function calledBefore(spyFn) {
@@ -1243,7 +1673,7 @@ var sinon = (function (buster) {
  */
 
 (function (sinon) {
-    var commonJSModule = typeof module == "object" && typeof require == "function";
+    var commonJSModule = typeof module !== 'undefined' && module.exports;
 
     if (!sinon && commonJSModule) {
         sinon = require("../sinon");
@@ -1614,7 +2044,7 @@ var sinon = (function (buster) {
  */
 
 (function (sinon) {
-    var commonJSModule = typeof module == "object" && typeof require == "function";
+    var commonJSModule = typeof module !== 'undefined' && module.exports;
     var push = [].push;
 
     if (!sinon && commonJSModule) {
@@ -2039,7 +2469,7 @@ var sinon = (function (buster) {
  */
 
 (function (sinon) {
-    var commonJSModule = typeof module == "object" && typeof require == "function";
+    var commonJSModule = typeof module !== 'undefined' && module.exports;
     var push = [].push;
     var hasOwnProperty = Object.prototype.hasOwnProperty;
 
@@ -2338,7 +2768,7 @@ if (typeof sinon == "undefined") {
         },
 
         firstTimerInRange: function (from, to) {
-            var timer, smallest, originalTimer;
+            var timer, smallest = null, originalTimer;
 
             for (var id in this.timeouts) {
                 if (this.timeouts.hasOwnProperty(id)) {
@@ -2346,7 +2776,7 @@ if (typeof sinon == "undefined") {
                         continue;
                     }
 
-                    if (!smallest || this.timeouts[id].callAt < smallest) {
+                    if (smallest === null || this.timeouts[id].callAt < smallest) {
                         originalTimer = this.timeouts[id];
                         smallest = this.timeouts[id].callAt;
 
@@ -2522,7 +2952,7 @@ sinon.timers = {
     Date: Date
 };
 
-if (typeof module == "object" && typeof require == "function") {
+if (typeof module !== 'undefined' && module.exports) {
     module.exports = sinon;
 }
 
@@ -2616,13 +3046,14 @@ if (typeof sinon == "undefined") {
  * Copyright (c) 2010-2013 Christian Johansen
  */
 
-if (typeof sinon == "undefined") {
-    this.sinon = {};
-}
-sinon.xhr = { XMLHttpRequest: this.XMLHttpRequest };
-
 // wrapper for global
 (function(global) {
+
+    if (typeof sinon === "undefined") {
+        global.sinon = {};
+    }
+    sinon.xhr = { XMLHttpRequest: global.XMLHttpRequest };
+
     var xhr = sinon.xhr;
     xhr.GlobalXMLHttpRequest = global.XMLHttpRequest;
     xhr.GlobalActiveXObject = global.ActiveXObject;
@@ -2994,10 +3425,6 @@ sinon.xhr = { XMLHttpRequest: this.XMLHttpRequest };
             this.status = typeof status == "number" ? status : 200;
             this.statusText = FakeXMLHttpRequest.statusCodes[this.status];
             this.setResponseBody(body || "");
-            if (typeof this.onload === "function"){
-                this.onload();
-            }
-
         }
     });
 
@@ -3104,9 +3531,10 @@ sinon.xhr = { XMLHttpRequest: this.XMLHttpRequest };
     };
 
     sinon.FakeXMLHttpRequest = FakeXMLHttpRequest;
-})(this);
 
-if (typeof module == "object" && typeof require == "function") {
+})(typeof global === "object" ? global : this);
+
+if (typeof module !== 'undefined' && module.exports) {
     module.exports = sinon;
 }
 
@@ -3178,7 +3606,7 @@ sinon.fakeServer = (function () {
         if (matchOne(response, this.getHTTPMethod(request), requestUrl)) {
             if (typeof response.response == "function") {
                 var ru = response.url;
-                var args = [request].concat(!ru ? [] : requestUrl.match(ru).slice(1));
+                var args = [request].concat(ru && typeof ru.exec == "function" ? ru.exec(requestUrl).slice(1) : []);
                 return response.response.apply(response, args);
             }
 
@@ -3318,7 +3746,7 @@ sinon.fakeServer = (function () {
     };
 }());
 
-if (typeof module == "object" && typeof require == "function") {
+if (typeof module !== 'undefined' && module.exports) {
     module.exports = sinon;
 }
 
@@ -3423,7 +3851,7 @@ if (typeof module == "object" && typeof require == "function") {
  * Copyright (c) 2010-2013 Christian Johansen
  */
 
-if (typeof module == "object" && typeof require == "function") {
+if (typeof module !== 'undefined' && module.exports) {
     var sinon = require("../sinon");
     sinon.extend(sinon, require("./util/fake_timers"));
 }
@@ -3525,7 +3953,7 @@ if (typeof module == "object" && typeof require == "function") {
 
     sinon.sandbox.useFakeXMLHttpRequest = sinon.sandbox.useFakeServer;
 
-    if (typeof module == "object" && typeof require == "function") {
+    if (typeof module !== 'undefined' && module.exports) {
         module.exports = sinon.sandbox;
     }
 }());
@@ -3548,7 +3976,7 @@ if (typeof module == "object" && typeof require == "function") {
  */
 
 (function (sinon) {
-    var commonJSModule = typeof module == "object" && typeof require == "function";
+    var commonJSModule = typeof module !== 'undefined' && module.exports;
 
     if (!sinon && commonJSModule) {
         sinon = require("../sinon");
@@ -3621,7 +4049,7 @@ if (typeof module == "object" && typeof require == "function") {
  */
 
 (function (sinon) {
-    var commonJSModule = typeof module == "object" && typeof require == "function";
+    var commonJSModule = typeof module !== 'undefined' && module.exports;
 
     if (!sinon && commonJSModule) {
         sinon = require("../sinon");
@@ -3718,7 +4146,7 @@ if (typeof module == "object" && typeof require == "function") {
  */
 
 (function (sinon, global) {
-    var commonJSModule = typeof module == "object" && typeof require == "function";
+    var commonJSModule = typeof module !== "undefined" && module.exports;
     var slice = Array.prototype.slice;
     var assert;
 
@@ -3885,3 +4313,4 @@ if (typeof module == "object" && typeof require == "function") {
     }
 }(typeof sinon == "object" && sinon || null, typeof window != "undefined" ? window : (typeof self != "undefined") ? self : global));
 
+return sinon;}.call(typeof window != 'undefined' && window || {}));
